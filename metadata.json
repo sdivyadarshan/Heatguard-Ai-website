@@ -1,0 +1,8 @@
+{
+  "name": "HeatGuard AI Command Centre",
+  "description": "HeatGuard AI - Heat-Health Intelligence & Emergency Command Centre for early warning, biometeorological stress monitoring, and Heat Action Plan coordination.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

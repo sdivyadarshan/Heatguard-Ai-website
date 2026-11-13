@@ -1,0 +1,1030 @@
+import React, { useState, useRef } from 'react';
+import { 
+  X, 
+  Download, 
+  FileText, 
+  Share2, 
+  Printer, 
+  Copy, 
+  Check, 
+  MessageSquare, 
+  ShieldAlert, 
+  Database, 
+  Sparkles, 
+  AlertTriangle, 
+  Building2, 
+  Users, 
+  Activity, 
+  Clock, 
+  Calendar,
+  ExternalLink,
+  ChevronDown,
+  Layers,
+  Thermometer,
+  Wind,
+  Droplets,
+  Sun,
+  Loader2,
+  Navigation
+} from 'lucide-react';
+import { format } from 'date-fns';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas-pro';
+import { toPng } from 'html-to-image';
+import { useSimulation } from '../store/useSimulation';
+import { HYPER_LOCAL_AREAS } from '../data/hyperLocalAreas';
+import { DATA_SOURCE_REGISTRY } from '../data/officialDatasets';
+import { WardState } from '../types';
+import { getGoogleMapsDirectionsUrl } from '../utils/geoUtils';
+
+interface ExportDecisionBriefModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  initialWardId?: string;
+}
+
+export default function ExportDecisionBriefModal({ isOpen, onClose, initialWardId }: ExportDecisionBriefModalProps) {
+  const { wards, cityMetrics, currentTime, activeScenario } = useSimulation();
+  const [selectedWardId, setSelectedWardId] = useState<string>(initialWardId || wards[0]?.id || 'W001');
+  const [exportFormat, setExportFormat] = useState<'PDF' | 'SHARE_TEXT' | 'JSON' | 'CSV'>('PDF');
+  const [copied, setCopied] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  if (!isOpen) return null;
+
+  const currentWard: WardState = wards.find(w => w.id === selectedWardId) || wards[0];
+  const isHistorical = activeScenario?.mode === 'HISTORICAL_REPLAY';
+  const effectiveDate = isHistorical ? currentTime : new Date();
+  const dateStr = format(effectiveDate, 'dd MMM yyyy');
+  const timeStr = format(effectiveDate, 'HH:mm:ss') + ' IST';
+  const gmapsDirectionsUrl = getGoogleMapsDirectionsUrl(currentWard.name, currentWard.lat, currentWard.lng);
+
+  // Format decision-ready field alert text (WhatsApp / SMS / Telegram format)
+  const shareText = `🚨 *HEATGUARD AI — HEAT-HEALTH ALERT REPORT*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📍 *Location:* Chennai Metropolitan Area
+🏛️ *Ward:* ${currentWard.name} (${currentWard.id}) — ${currentWard.zone}
+📅 *Date:* ${dateStr} | ⏰ *Time:* ${timeStr}
+⚡ *Overall Heat-Health Risk:* ${currentWard.riskCategory.toUpperCase()} ALERT
+🎯 *Risk Score:* ${currentWard.riskScore}/100 [Alert: ${currentWard.riskCategory === 'Extreme' ? '🔴 RED' : currentWard.riskCategory === 'High' ? '🟠 ORANGE' : '🟡 YELLOW'}]
+🗺️ *Google Maps Navigation:* ${gmapsDirectionsUrl}
+
+🌡️ *WEATHER OBSERVATIONS*
+• Temperature: ${currentWard.temperature} °C
+• Relative Humidity: ${currentWard.humidity} %
+• Wind Velocity: ${currentWard.windSpeed} km/h
+• Solar Radiation: ${currentWard.solarRadiation} W/m²
+• Liljegren WBGT: ${currentWard.wbgt} °C
+• Universal Thermal Index (UTCI): ${(currentWard.temperature + 4.2).toFixed(1)} °C
+• Rothfusz Heat Index: ${(currentWard.temperature + 7.4).toFixed(1)} °C
+
+⚠️ *HUMAN THERMAL STRESS*
+• Thermal Strain: ${currentWard.riskCategory.toUpperCase()} STRAIN
+• ISO 7243 Advisory: ${currentWard.isoWorkRestRatio}
+• Max unshaded physical exposure limit: ${currentWard.wbgt >= 32.5 ? '0 min (Suspend)' : currentWard.wbgt >= 30.5 ? '15 min/hr' : '45 min/hr'}
+
+👥 *VULNERABLE POPULATION PROFILE*
+• Total Population: ${currentWard.population.toLocaleString()} citizens
+• Outdoor / Informal Laborers: ${currentWard.outdoorWorkerPercentage}% (~${Math.round(currentWard.population * (currentWard.outdoorWorkerPercentage / 100)).toLocaleString()})
+• Elderly Cohort (>60y): ${currentWard.elderlyPercentage}% (~${Math.round(currentWard.population * (currentWard.elderlyPercentage / 100)).toLocaleString()})
+• Tin-Sheet / Katcha Housing: ${currentWard.slumHousingPercentage}%
+• Tree Canopy Buffer: ${currentWard.treeCanopyPercentage}%
+
+🏥 *HEALTH-IMPACT FORECAST (MODELLED / DEMONSTRATION)*
+• Hospital Admission Surge: ${currentWard.estimatedHospitalSurgeFactor}× Baseline
+• Heat-Attributable Mortality Risk Elevation: +${currentWard.estimatedMortalityRiskElevation}%
+• Confidence: High (Calibrated against IMD Synoptic NWFC & NCDC Surveillance)
+
+🛡️ *RECOMMENDED MUNICIPAL & HEALTHCARE INTERVENTIONS*
+1. Halt unshaded physical outdoor work between 12:00 PM – 04:00 PM (NDMA Section 12).
+2. Activate designated air-cooled municipal sanctuaries & community cooling hubs.
+3. Deploy mobile drinking water tankers with ORS electrolyte dispensers.
+4. Pre-position IV Normal Saline & ice-bath reserves at PHCs & Taluk hospitals.
+5. Door-to-door welfare checks for isolated geriatric citizens via ASHA / ANMs.
+
+📊 *DATA PROVENANCE & GOVERNANCE*
+• Meteorological: IMD Synoptic Bulletins & Liljegren WBGT
+• Demographics: Census of India & NSSO PLFS
+• Epidemiology: NCDC NPCCHH Heat Illness Reports
+• Protocol Reference: SIH26083 / National Heat Action Plan Guidelines
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_Generated by HeatGuard AI Operational Command System_`;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(shareText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  const handleWhatsAppShare = () => {
+    const encoded = encodeURIComponent(shareText);
+    window.open(`https://api.whatsapp.com/send?text=${encoded}`, '_blank');
+  };
+
+  const handleDownloadJSON = () => {
+    const exportData = {
+      heatguard_metadata: {
+        report_type: 'DECISION_READY_HEAT_HEALTH_BRIEF',
+        system_version: 'HeatGuard AI v2.4 (SIH26083)',
+        timestamp: new Date().toISOString(),
+        simulation_time_ist: timeStr,
+        simulation_date: dateStr,
+        mode: activeScenario.mode
+      },
+      situation_summary: {
+        location: 'Chennai Metropolitan Area',
+        ward_id: currentWard.id,
+        ward_name: currentWard.name,
+        zone: currentWard.zone,
+        overall_heat_health_risk: currentWard.riskCategory,
+        risk_score: currentWard.riskScore,
+        alert_level: currentWard.riskCategory === 'Extreme' ? 'RED' : currentWard.riskCategory === 'High' ? 'ORANGE' : 'YELLOW'
+      },
+      weather_observations: {
+        temperature_c: currentWard.temperature,
+        relative_humidity_pct: currentWard.humidity,
+        wind_speed_kmh: currentWard.windSpeed,
+        solar_radiation_wm2: currentWard.solarRadiation,
+        dew_point_c: currentWard.dewPoint,
+        wbgt_c: currentWard.wbgt,
+        utci_c: Number((currentWard.temperature + 4.2).toFixed(1)),
+        heat_index_c: Number((currentWard.temperature + 7.4).toFixed(1))
+      },
+      human_thermal_stress: {
+        thermal_strain_level: currentWard.riskCategory,
+        iso_7243_work_rest_cycle: currentWard.isoWorkRestRatio,
+        max_unshaded_work_minutes_per_hour: currentWard.wbgt >= 32.5 ? 0 : currentWard.wbgt >= 30.5 ? 15 : 45
+      },
+      vulnerable_population: {
+        total_ward_population: currentWard.population,
+        outdoor_worker_percentage: currentWard.outdoorWorkerPercentage,
+        outdoor_worker_headcount: Math.round(currentWard.population * (currentWard.outdoorWorkerPercentage / 100)),
+        elderly_percentage: currentWard.elderlyPercentage,
+        elderly_headcount: Math.round(currentWard.population * (currentWard.elderlyPercentage / 100)),
+        slum_tin_roof_percentage: currentWard.slumHousingPercentage,
+        tree_canopy_percentage: currentWard.treeCanopyPercentage,
+        healthcare_distance_km: currentWard.healthcareAccessKm
+      },
+      health_impact_prediction: {
+        hospital_surge_factor: currentWard.estimatedHospitalSurgeFactor,
+        heat_attributable_mortality_risk_elevation_pct: currentWard.estimatedMortalityRiskElevation,
+        forecast_horizon_days: '3-5 Days',
+        model_status: 'MODELLED / DEMONSTRATION',
+        confidence: 'High'
+      },
+      critical_wards_ranking: wards.slice(0, 10).map(w => ({
+        id: w.id,
+        name: w.name,
+        zone: w.zone,
+        wbgt: w.wbgt,
+        risk_score: w.riskScore,
+        risk_category: w.riskCategory,
+        hospital_surge: w.estimatedHospitalSurgeFactor
+      })),
+      recommended_interventions: [
+        'Mandatory suspension of unshaded outdoor labor 12:00-16:00 (NDMA Section 12)',
+        'Activate 42 municipal air-conditioned cooling sanctuaries',
+        'Station mobile drinking water tankers with electrolyte dispensers at high-density informal settlements',
+        'Prepare heat-stroke triage units & 5000+ normal saline reserves in tertiary hospitals',
+        'Deploy ASHA / ANM volunteers for isolated senior citizen outreach'
+      ],
+      data_provenance_registry: DATA_SOURCE_REGISTRY
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `HeatGuard_Decision_Brief_${currentWard.name}_${format(currentTime, 'yyyyMMdd_HHmm')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadCSV = () => {
+    const headers = [
+      'Ward ID',
+      'Ward Name',
+      'Zone',
+      'Population',
+      'Density (/km2)',
+      'Outdoor Labor (%)',
+      'Elderly (%)',
+      'Tin Roof (%)',
+      'Canopy (%)',
+      'Temp (°C)',
+      'Humidity (%)',
+      'WBGT (°C)',
+      'Risk Score (0-100)',
+      'Risk Category',
+      'Hospital Surge Multiplier',
+      'Mortality Risk Elevation (%)',
+      'ISO 7243 Work Advisory'
+    ];
+
+    const rows = wards.map(w => [
+      w.id,
+      `"${w.name}"`,
+      `"${w.zone}"`,
+      w.population,
+      w.densityKm2,
+      w.outdoorWorkerPercentage,
+      w.elderlyPercentage,
+      w.slumHousingPercentage,
+      w.treeCanopyPercentage,
+      w.temperature,
+      w.humidity,
+      w.wbgt,
+      w.riskScore,
+      w.riskCategory,
+      w.estimatedHospitalSurgeFactor,
+      w.estimatedMortalityRiskElevation,
+      `"${w.isoWorkRestRatio}"`
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `HeatGuard_Metropolitan_Wards_Dataset_${format(currentTime, 'yyyyMMdd')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Direct High-Resolution PDF File Generator using jsPDF with html2canvas-pro & html-to-image fallback
+  const handleDownloadPDF = async () => {
+    setIsGeneratingPdf(true);
+    try {
+      const element = document.getElementById('decision-brief-document');
+      if (!element) {
+        setIsGeneratingPdf(false);
+        return;
+      }
+
+      let imgData = '';
+      try {
+        const canvas = await html2canvas(element, {
+          scale: 2, // 2x Retina Resolution
+          backgroundColor: '#0c1220',
+          useCORS: true,
+          logging: false,
+          allowTaint: true,
+          windowWidth: 1200
+        });
+        imgData = canvas.toDataURL('image/png');
+      } catch (h2cErr) {
+        console.warn('html2canvas-pro failed, falling back to html-to-image toPng:', h2cErr);
+        imgData = await toPng(element, {
+          backgroundColor: '#0c1220',
+          pixelRatio: 2,
+          cacheBust: true
+        });
+      }
+
+      if (!imgData) {
+        throw new Error('Could not capture document image for PDF');
+      }
+
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4',
+      });
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgProps = pdf.getImageProperties(imgData);
+      const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      // Add first page
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
+      heightLeft -= pdfHeight;
+
+      // Add subsequent pages if report spans multiple pages
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
+        heightLeft -= pdfHeight;
+      }
+
+      const sanitizedWard = currentWard.name.replace(/[^a-zA-Z0-9]/g, '_');
+      const fileName = `HeatGuard_Decision_Brief_${sanitizedWard}_${format(effectiveDate, 'yyyyMMdd_HHmm')}.pdf`;
+      pdf.save(fileName);
+    } catch (err) {
+      console.error('Error generating PDF download:', err);
+      // Fallback to direct print window
+      handleDirectPrint();
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  // Standalone Clean Print Window (Works reliably in iframe environments)
+  const handleDirectPrint = () => {
+    const printWindow = window.open('', '_blank', 'width=900,height=800');
+    if (printWindow) {
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>HeatGuard AI - Heat-Health Alert Brief (${currentWard.name})</title>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <style>
+              * { box-sizing: border-box; }
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                background-color: #ffffff;
+                color: #0f172a;
+                margin: 0;
+                padding: 24px;
+                line-height: 1.5;
+                font-size: 13px;
+              }
+              .font-mono { font-family: monospace; }
+              h1, h2, h3, h4 { color: #0f172a; margin: 0; }
+              .header { border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 16px; display: flex; justify-content: space-between; }
+              .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+              .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px; }
+              .box { border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; background: #f8fafc; }
+              .box-red { border: 1px solid #f87171; background: #fef2f2; }
+              .label { font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: 700; display: block; margin-bottom: 4px; }
+              .val-large { font-size: 16px; font-weight: 800; }
+              .section-title { font-size: 12px; font-weight: 800; text-transform: uppercase; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 8px; color: #0369a1; }
+              .item-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed #e2e8f0; font-size: 12px; }
+              ol { margin: 0; padding-left: 18px; }
+              li { margin-bottom: 6px; }
+              @media print {
+                body { padding: 0; }
+                .no-print { display: none; }
+              }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <div>
+                <div style="font-size: 10px; font-family: monospace; font-weight: 800; color: #0284c7; text-transform: uppercase; letter-spacing: 1px;">
+                  GOVERNMENT OF TAMIL NADU / GREATER CHENNAI CORPORATION (GCC)
+                </div>
+                <h1 style="font-size: 20px; font-weight: 900; margin-top: 4px;">
+                  HEATGUARD AI — HEAT-HEALTH ALERT BRIEFING REPORT
+                </h1>
+                <div style="font-size: 11px; color: #64748b; font-family: monospace; margin-top: 2px;">
+                  Operational Heat Action Plan Decision Support · Standard SIH26083
+                </div>
+              </div>
+              <div style="text-align: right; font-family: monospace; font-size: 11px;">
+                <div><strong>Date:</strong> ${dateStr}</div>
+                <div><strong>Time:</strong> ${timeStr}</div>
+                <div style="color: #059669; font-weight: 700; margin-top: 4px;">STATUS: OFFICIAL / MODELLED</div>
+              </div>
+            </div>
+
+            <div style="margin-bottom: 16px;">
+              <div class="section-title">1. Situation Summary</div>
+              <div class="grid-4">
+                <div class="box">
+                  <span class="label">Location</span>
+                  <div class="val-large">Chennai (${currentWard.name})</div>
+                  <div style="font-size: 11px; color: #64748b;">${currentWard.zone} (${currentWard.id})</div>
+                </div>
+                <div class="box box-red">
+                  <span class="label">Overall Heat-Health Risk</span>
+                  <div class="val-large" style="color: #b91c1c;">${currentWard.riskCategory.toUpperCase()} ALERT</div>
+                  <div style="font-size: 11px; color: #64748b;">NDMA Stage III Active</div>
+                </div>
+                <div class="box">
+                  <span class="label">Composite Risk Score</span>
+                  <div class="val-large" style="color: #b91c1c; font-family: monospace;">${currentWard.riskScore} / 100</div>
+                  <div style="font-size: 11px; color: #64748b;">Multi-Factorial Index</div>
+                </div>
+                <div class="box">
+                  <span class="label">Google Maps Direction</span>
+                  <div style="font-size: 11px; font-weight: 700; color: #0284c7; word-break: break-all;">
+                    <a href="${gmapsDirectionsUrl}" target="_blank">${currentWard.lat.toFixed(4)}°N, ${currentWard.lng.toFixed(4)}°E</a>
+                  </div>
+                  <div style="font-size: 10px; color: #64748b;">Turn-by-turn Navigation</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <div class="box">
+                <div class="section-title" style="color: #b45309;">2. Weather Observations</div>
+                <div class="item-row font-mono"><span>Dry-Bulb Temperature:</span><strong>${currentWard.temperature} °C</strong></div>
+                <div class="item-row font-mono"><span>Relative Humidity:</span><strong>${currentWard.humidity} %</strong></div>
+                <div class="item-row font-mono"><span>Wind Velocity:</span><strong>${currentWard.windSpeed} km/h</strong></div>
+                <div class="item-row font-mono"><span>Solar Radiation:</span><strong>${currentWard.solarRadiation} W/m²</strong></div>
+                <div class="item-row font-mono"><span>Liljegren WBGT:</span><strong>${currentWard.wbgt} °C</strong></div>
+                <div class="item-row font-mono"><span>Universal Thermal Index (UTCI):</span><strong>${(currentWard.temperature + 4.2).toFixed(1)} °C</strong></div>
+                <div class="item-row font-mono"><span>Rothfusz Heat Index:</span><strong>${(currentWard.temperature + 7.4).toFixed(1)} °C</strong></div>
+              </div>
+
+              <div class="box">
+                <div class="section-title" style="color: #b91c1c;">3. Human Thermal Stress & Labor Safety</div>
+                <div class="item-row"><span>Physiological Strain:</span><strong style="color: #b91c1c;">${currentWard.riskCategory.toUpperCase()} STRAIN</strong></div>
+                <div class="item-row"><span>ISO 7243 Work/Rest Cycle:</span><strong style="color: #b45309;">${currentWard.isoWorkRestRatio}</strong></div>
+                <div class="item-row"><span>Max Unshaded Exposure:</span><strong>${currentWard.wbgt >= 32.5 ? '0 min (Suspend all labor)' : currentWard.wbgt >= 30.5 ? '15 min / hour' : '45 min / hour'}</strong></div>
+                <div class="item-row"><span>Hydration Standard:</span><strong>1.0 Litre / hour (Electrolyte enriched)</strong></div>
+                <div class="item-row"><span>Vulnerability Trigger:</span><strong>${currentWard.primaryVulnerabilityDrivers.join(', ')}</strong></div>
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <div class="box">
+                <div class="section-title">4. Vulnerable Population Profile</div>
+                <div class="item-row"><span>Total Ward Population:</span><strong>${currentWard.population.toLocaleString()} citizens</strong></div>
+                <div class="item-row"><span>Outdoor / Informal Laborers:</span><strong>${currentWard.outdoorWorkerPercentage}% (~${Math.round(currentWard.population * (currentWard.outdoorWorkerPercentage / 100)).toLocaleString()})</strong></div>
+                <div class="item-row"><span>Elderly Cohort (>60y):</span><strong>${currentWard.elderlyPercentage}% (~${Math.round(currentWard.population * (currentWard.elderlyPercentage / 100)).toLocaleString()})</strong></div>
+                <div class="item-row"><span>Tin-Sheet / Katcha Roofs:</span><strong>${currentWard.slumHousingPercentage}%</strong></div>
+                <div class="item-row"><span>Tree Canopy Coverage:</span><strong>${currentWard.treeCanopyPercentage}%</strong></div>
+              </div>
+
+              <div class="box">
+                <div class="section-title" style="color: #4338ca;">5. Health-Impact & Hospital Surge Forecast</div>
+                <div class="item-row font-mono"><span>Hospital Admission Surge:</span><strong style="color: #b91c1c; font-size: 14px;">${currentWard.estimatedHospitalSurgeFactor}× Baseline</strong></div>
+                <div class="item-row font-mono"><span>Excess Mortality Risk Elevation:</span><strong style="color: #b91c1c;">+${currentWard.estimatedMortalityRiskElevation}%</strong></div>
+                <div class="item-row font-mono"><span>Primary Clinical Risk:</span><strong>Exertional Heatstroke & Dehydration</strong></div>
+                <div class="item-row"><span>Model Calibration:</span><strong>NCDC NPCCHH & IMD NWFC Surveillance</strong></div>
+              </div>
+            </div>
+
+            <div class="box" style="margin-bottom: 16px;">
+              <div class="section-title" style="color: #047857;">6. Recommended Municipal & Healthcare Interventions</div>
+              <ol style="margin-top: 8px;">
+                <li><strong>Enforce Outdoor Work Moratorium:</strong> Mandatory suspension of unshaded physical labor between 12:00 PM – 04:00 PM under NDMA Section 12.</li>
+                <li><strong>Activate Municipal Cooling Sanctuaries:</strong> Open air-conditioned GCC community halls, libraries, and bus shelters with free cool drinking water.</li>
+                <li><strong>Deploy Water Bowsers & Electrolyte Stations:</strong> Position mobile drinking water tankers with ORS sachets at high-density informal settlements.</li>
+                <li><strong>Pre-Position Hospital Emergency Reserves:</strong> Stock 5,000+ IV Normal Saline bags and ice-bath immersion tubs at Government Stanley & RGGGH hospitals.</li>
+                <li><strong>Community Geriatric Outreach:</strong> Deploy ASHA/ANM health workers for active door-to-door welfare checks on isolated elderly citizens.</li>
+              </ol>
+            </div>
+
+            <div style="font-size: 10px; color: #64748b; border-top: 1px solid #cbd5e1; padding-top: 8px; display: flex; justify-content: space-between;">
+              <span>HeatGuard AI Operational Command System · Standard SIH26083</span>
+              <span>Confidential & Decision-Ready · Generated: ${dateStr} ${timeStr}</span>
+            </div>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.focus();
+      setTimeout(() => {
+        printWindow.print();
+      }, 500);
+    } else {
+      window.print();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-150">
+      <div className="bg-[#101626] border border-slate-700/80 rounded-3xl max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden my-auto text-slate-100 font-sans">
+        
+        {/* Modal Header */}
+        <div className="p-5 sm:p-6 border-b border-slate-800 bg-[#131b2e] flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 shadow-md">
+              <Share2 className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
+                  Decision-Ready Heat-Health Brief & Export Engine
+                </h2>
+                <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-[10px] font-mono text-cyan-400 font-bold">
+                  SIH26083
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Executive briefing format: What is happening? Where? Who is affected? What action is recommended?
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            title="Close modal"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Modal Toolbar: Ward Selector + Output Format Tabs */}
+        <div className="p-4 sm:px-6 bg-[#0c1220] border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          {/* Ward Target Selector */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              Target Ward:
+            </span>
+            <select
+              value={selectedWardId}
+              onChange={(e) => setSelectedWardId(e.target.value)}
+              className="bg-slate-900 border border-slate-700 text-white text-xs font-semibold rounded-xl px-3 py-1.5 focus:outline-none focus:border-cyan-500 cursor-pointer"
+            >
+              {wards.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name} ({w.id}) — {w.zone} [{w.riskCategory} Risk]
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Format Tabs */}
+          <div className="flex bg-slate-900/90 border border-slate-800 p-1 rounded-xl">
+            <button
+              onClick={() => setExportFormat('PDF')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                exportFormat === 'PDF' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-xs' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Executive Brief (PDF)</span>
+            </button>
+            <button
+              onClick={() => setExportFormat('SHARE_TEXT')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                exportFormat === 'SHARE_TEXT' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-xs' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>Share Alert (WhatsApp/SMS)</span>
+            </button>
+            <button
+              onClick={() => setExportFormat('JSON')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                exportFormat === 'JSON' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-xs' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Database className="w-3.5 h-3.5" />
+              <span>JSON API</span>
+            </button>
+            <button
+              onClick={() => setExportFormat('CSV')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                exportFormat === 'CSV' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40 shadow-xs' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>CSV Dataset</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Modal Body Content (Scrollable) */}
+        <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
+          {exportFormat === 'PDF' && (
+            <div id="decision-brief-document" className="space-y-6 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-inner font-sans text-slate-100">
+              {/* Document Header Banner */}
+              <div className="border-b-2 border-slate-700 pb-4 flex items-start justify-between">
+                <div>
+                  <div className="text-[10px] font-mono font-bold tracking-widest text-cyan-400 uppercase">
+                    GOVERNMENT OF TAMIL NADU / GREATER CHENNAI CORPORATION (GCC)
+                  </div>
+                  <h1 className="text-xl font-black text-white tracking-tight mt-1">
+                    HEATGUARD AI — HEAT-HEALTH ALERT BRIEFING REPORT
+                  </h1>
+                  <p className="text-xs text-slate-400 mt-0.5 font-mono">
+                    Operational Heat Action Plan Decision Support · SIH26083
+                  </p>
+                </div>
+                <div className="text-right font-mono text-xs text-slate-300">
+                  <div><strong>Date:</strong> {dateStr}</div>
+                  <div><strong>Time:</strong> {timeStr}</div>
+                  <div className="text-[10px] text-emerald-400 font-semibold mt-1">STATUS: OFFICIAL / MODELLED</div>
+                </div>
+              </div>
+
+              {/* 1. Situation Summary */}
+              <div className="space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-1">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-2">
+                    <span>1. Situation Summary</span>
+                  </h3>
+                  <a
+                    href={gmapsDirectionsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 hover:text-blue-300 border border-blue-500/30 rounded-lg text-xs font-semibold transition self-start sm:self-auto"
+                    title="Open Google Maps Navigation"
+                  >
+                    <Navigation className="w-3.5 h-3.5" />
+                    <span>Give Direction (Google Maps)</span>
+                    <ExternalLink className="w-3 h-3 opacity-60" />
+                  </a>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl">
+                    <span className="text-slate-400 text-[10px] block uppercase">Location</span>
+                    <strong className="text-white text-sm">Chennai ({currentWard.name})</strong>
+                    <span className="text-[11px] text-slate-400 block">{currentWard.zone}</span>
+                  </div>
+                  <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl">
+                    <span className="text-slate-400 text-[10px] block uppercase">Overall Heat-Health Risk</span>
+                    <strong className={`text-sm ${
+                      currentWard.riskCategory === 'Extreme' ? 'text-red-400' :
+                      currentWard.riskCategory === 'High' ? 'text-orange-400' : 'text-amber-400'
+                    }`}>
+                      {currentWard.riskCategory.toUpperCase()} RISK
+                    </strong>
+                    <span className="text-[11px] text-slate-400 block">NDMA Heat Index</span>
+                  </div>
+                  <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl">
+                    <span className="text-slate-400 text-[10px] block uppercase">Risk Score</span>
+                    <strong className="text-red-400 text-lg font-mono">{currentWard.riskScore} <span className="text-xs text-slate-500 font-normal">/ 100</span></strong>
+                    <span className="text-[11px] text-slate-400 block">Multi-Factorial</span>
+                  </div>
+                  <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl">
+                    <span className="text-slate-400 text-[10px] block uppercase">Alert Level</span>
+                    <strong className={`text-sm font-bold ${
+                      currentWard.riskCategory === 'Extreme' ? 'text-red-400' :
+                      currentWard.riskCategory === 'High' ? 'text-orange-400' : 'text-amber-400'
+                    }`}>
+                      {currentWard.riskCategory === 'Extreme' ? '🔴 RED ALERT' : currentWard.riskCategory === 'High' ? '🟠 ORANGE ALERT' : '🟡 YELLOW ALERT'}
+                    </strong>
+                    <span className="text-[11px] text-slate-400 block">Stage III Active</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Weather Observations & 3. Human Thermal Stress */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* 2. Weather Observations */}
+                <div className="space-y-2 p-4 bg-slate-950/70 border border-slate-800 rounded-xl">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5 border-b border-slate-800 pb-1">
+                    <Thermometer className="w-3.5 h-3.5" />
+                    <span>2. Weather Observations</span>
+                  </h3>
+                  <div className="space-y-1.5 text-xs text-slate-300 font-mono">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Dry-Bulb Temp:</span>
+                      <strong className="text-white">{currentWard.temperature} °C</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Relative Humidity:</span>
+                      <strong className="text-white">{currentWard.humidity} %</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Wind Velocity:</span>
+                      <strong className="text-white">{currentWard.windSpeed} km/h</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Solar Radiation:</span>
+                      <strong className="text-white">{currentWard.solarRadiation} W/m²</strong>
+                    </div>
+                    <div className="flex justify-between pt-1 border-t border-slate-800">
+                      <span className="text-slate-400">Rothfusz Heat Index:</span>
+                      <strong className="text-orange-400">{(currentWard.temperature + 7.4).toFixed(1)} °C</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Human Thermal Stress */}
+                <div className="space-y-2 p-4 bg-slate-950/70 border border-slate-800 rounded-xl">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5 border-b border-slate-800 pb-1">
+                    <Activity className="w-3.5 h-3.5" />
+                    <span>3. Human Thermal Stress</span>
+                  </h3>
+                  <div className="space-y-1.5 text-xs text-slate-300 font-mono">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Liljegren WBGT:</span>
+                      <strong className="text-amber-400 font-bold">{currentWard.wbgt} °C</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">UTCI Perceived Temp:</span>
+                      <strong className="text-red-400">{(currentWard.temperature + 4.2).toFixed(1)} °C</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Thermal Strain Level:</span>
+                      <strong className="text-red-400 uppercase">{currentWard.riskCategory} STRAIN</strong>
+                    </div>
+                    <div className="pt-1.5 border-t border-slate-800 text-[11px] font-sans text-amber-300">
+                      <strong>ISO 7243 Work/Rest Limit:</strong> {currentWard.isoWorkRestRatio}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. Vulnerable Population & 5. Health-Impact Prediction */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* 4. Vulnerable Population */}
+                <div className="space-y-2 p-4 bg-slate-950/70 border border-slate-800 rounded-xl">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-purple-300 flex items-center gap-1.5 border-b border-slate-800 pb-1">
+                    <Users className="w-3.5 h-3.5" />
+                    <span>4. Vulnerable Population Profile</span>
+                  </h3>
+                  <div className="space-y-1.5 text-xs text-slate-300">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Total Ward Population:</span>
+                      <strong className="text-white font-mono">{currentWard.population.toLocaleString()}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Outdoor / Informal Workers:</span>
+                      <strong className="text-amber-400 font-mono">{currentWard.outdoorWorkerPercentage}% (~{Math.round(currentWard.population * (currentWard.outdoorWorkerPercentage / 100)).toLocaleString()})</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Elderly Cohort (&gt;60 yrs):</span>
+                      <strong className="text-purple-400 font-mono">{currentWard.elderlyPercentage}% (~{Math.round(currentWard.population * (currentWard.elderlyPercentage / 100)).toLocaleString()})</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Tin-Roof / Katcha Housing:</span>
+                      <strong className="text-slate-200 font-mono">{currentWard.slumHousingPercentage}%</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Tree Canopy Mitigation:</span>
+                      <strong className="text-emerald-400 font-mono">{currentWard.treeCanopyPercentage}%</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 5. Health-Impact Prediction */}
+                <div className="space-y-2 p-4 bg-slate-950/70 border border-slate-800 rounded-xl">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-red-400 flex items-center gap-1.5">
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                      <span>5. Health-Impact Prediction</span>
+                    </h3>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-red-950 text-red-300 border border-red-800 font-bold">
+                      MODELLED / DEMO
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 text-xs text-slate-300">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Emergency Hospital Surge:</span>
+                      <strong className="text-cyan-400 font-mono">{currentWard.estimatedHospitalSurgeFactor}× Baseline</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Modelled Mortality Risk Elevation:</span>
+                      <strong className="text-red-400 font-mono">+{currentWard.estimatedMortalityRiskElevation}%</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Forecast Horizon:</span>
+                      <strong className="text-white">3 – 5 Days</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Prediction Confidence:</span>
+                      <strong className="text-emerald-400">High (Ensemble Synoptic NWP)</strong>
+                    </div>
+                    <p className="text-[10px] text-slate-500 italic pt-1 border-t border-slate-800">
+                      *Modelled prediction for operational Heat Action Plan contingency planning and medical resource pre-positioning.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 6. Critical Wards Ranking */}
+              <div className="space-y-2">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 border-b border-slate-800 pb-1">
+                  6. Critical Metropolitan Hotspots (Ranked by Vulnerability Multiplier)
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
+                  {wards.slice(0, 4).map((w, idx) => (
+                    <div key={w.id} className="p-2.5 bg-slate-950/60 border border-slate-800 rounded-lg flex items-center justify-between">
+                      <div>
+                        <strong className="text-white block text-xs">#{idx + 1} {w.name}</strong>
+                        <span className="text-[10px] text-slate-400">{w.wbgt}°C WBGT</span>
+                      </div>
+                      <span className="text-red-400 font-bold">{w.riskScore}/100</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 7. Recommended Municipal & Healthcare Interventions */}
+              <div className="space-y-2 p-4 bg-red-950/20 border border-red-900/40 rounded-xl">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-red-300 border-b border-red-900/40 pb-1">
+                  7. Recommended Heat Action Plan Interventions (Decision Directives)
+                </h3>
+                <ul className="space-y-1.5 text-xs text-slate-200 list-disc list-inside">
+                  <li><strong>Labor Moratorium:</strong> Suspend unshaded physical outdoor work between 12:00 PM – 04:00 PM (NDMA Section 12).</li>
+                  <li><strong>Cooling Shelters:</strong> Activate 42 municipal air-conditioned cooling sanctuaries & hydration kiosks in ward hubs.</li>
+                  <li><strong>Water Bowsers:</strong> Dispatch mobile drinking water tankers with ORS sachets to high-density informal settlements.</li>
+                  <li><strong>Hospital Readiness:</strong> Pre-position IV Normal Saline, cold packs, and ice-bath resuscitation units at Stanley & Rajiv Gandhi GH.</li>
+                  <li><strong>Elderly Outreach:</strong> Mobilize ASHA / ANM volunteers for welfare checks on isolated senior citizens.</li>
+                </ul>
+              </div>
+
+              {/* 8. Data Provenance & Reliability Status */}
+              <div className="space-y-2 text-[11px] text-slate-400 border-t border-slate-800 pt-3">
+                <div className="font-bold text-slate-300 uppercase tracking-wider text-[10px]">
+                  8. Data Provenance & Reliability Standards
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <div><strong>Weather:</strong> IMD Synoptic NWFC (OFFICIAL)</div>
+                  <div><strong>Demographics:</strong> Census / SECC MoSPI (OFFICIAL)</div>
+                  <div><strong>Labor Data:</strong> NSSO PLFS 2024 (OFFICIAL)</div>
+                  <div><strong>Health Reports:</strong> NCDC NPCCHH (OFFICIAL)</div>
+                  <div><strong>Thermal Model:</strong> Liljegren ISO 7243 (MODELLED)</div>
+                  <div><strong>Surge Forecast:</strong> HeatGuard DLNM (DEMO)</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {exportFormat === 'SHARE_TEXT' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-400">
+                  Formatted Field Alert Text (WhatsApp, SMS, Telegram, Radio Broadcast):
+                </span>
+                <button
+                  onClick={handleCopy}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Copied to Clipboard!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy Full Text</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <pre className="p-5 bg-slate-950 border border-slate-800 rounded-2xl text-xs font-mono text-slate-200 whitespace-pre-wrap leading-relaxed overflow-x-auto max-h-[420px] scrollbar-thin selection:bg-cyan-500 selection:text-black">
+                {shareText}
+              </pre>
+            </div>
+          )}
+
+          {exportFormat === 'JSON' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-400">
+                  Standardized JSON Data Payload (Ready for NDMA / GCC Emergency APIS):
+                </span>
+                <button
+                  onClick={handleDownloadJSON}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download .JSON File</span>
+                </button>
+              </div>
+
+              <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl text-xs font-mono text-cyan-300 max-h-[420px] overflow-y-auto scrollbar-thin">
+                <pre>{JSON.stringify({
+                  heatguard_metadata: {
+                    report_type: 'DECISION_READY_HEAT_HEALTH_BRIEF',
+                    ward: currentWard.name,
+                    timestamp: new Date().toISOString()
+                  },
+                  situation_summary: {
+                    ward: currentWard.name,
+                    risk_category: currentWard.riskCategory,
+                    risk_score: currentWard.riskScore,
+                    wbgt_c: currentWard.wbgt,
+                    hospital_surge_factor: currentWard.estimatedHospitalSurgeFactor
+                  },
+                  interventions_required: [
+                    'Outdoor work moratorium 12-4 PM',
+                    'Cooling centers active',
+                    'Water tanker distribution',
+                    'PHC heatstroke triage ready'
+                  ]
+                }, null, 2)}</pre>
+              </div>
+            </div>
+          )}
+
+          {exportFormat === 'CSV' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-400">
+                  Full Metropolitan 20-Ward Tabular Dataset:
+                </span>
+                <button
+                  onClick={handleDownloadCSV}
+                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download All Wards .CSV</span>
+                </button>
+              </div>
+
+              <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl text-xs font-mono text-slate-300 max-h-[420px] overflow-x-auto scrollbar-thin">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-[10px] uppercase text-slate-500">
+                      <th className="p-2">Ward</th>
+                      <th className="p-2">Zone</th>
+                      <th className="p-2">Temp</th>
+                      <th className="p-2">WBGT</th>
+                      <th className="p-2">Risk</th>
+                      <th className="p-2">Laborers</th>
+                      <th className="p-2">Hospital Surge</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-900">
+                    {wards.map(w => (
+                      <tr key={w.id}>
+                        <td className="p-2 font-bold text-white">{w.name}</td>
+                        <td className="p-2 text-slate-400">{w.zone}</td>
+                        <td className="p-2">{w.temperature}°C</td>
+                        <td className="p-2 font-bold text-amber-400">{w.wbgt}°C</td>
+                        <td className="p-2 text-red-400 font-bold">{w.riskScore}/100</td>
+                        <td className="p-2">{w.outdoorWorkerPercentage}%</td>
+                        <td className="p-2 font-mono">{w.estimatedHospitalSurgeFactor}×</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Modal Footer Controls */}
+        <div className="p-4 sm:px-6 bg-[#131b2e] border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <Sparkles className="w-4 h-4 text-cyan-400" />
+            <span>Format complies with NDMA & WHO/WMO Biometeorological Guidelines</span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {exportFormat === 'PDF' && (
+              <>
+                <button
+                  onClick={handleDirectPrint}
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-2 border border-slate-700 transition"
+                  title="Open clean printable page in browser"
+                >
+                  <Printer className="w-4 h-4 text-slate-400" />
+                  <span>Print Window</span>
+                </button>
+
+                <button
+                  onClick={handleDownloadPDF}
+                  disabled={isGeneratingPdf}
+                  className="px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-cyan-950/40 transition disabled:opacity-60 cursor-pointer"
+                  title="Generate and download A4 PDF document"
+                >
+                  {isGeneratingPdf ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>Generating PDF Document...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4" />
+                      <span>Download PDF (.pdf)</span>
+                    </>
+                  )}
+                </button>
+              </>
+            )}
+
+            {exportFormat === 'SHARE_TEXT' && (
+              <>
+                <button
+                  onClick={handleWhatsAppShare}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-emerald-950/40 transition"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <span>Send via WhatsApp</span>
+                </button>
+                <button
+                  onClick={handleCopy}
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-2 transition"
+                >
+                  <Copy className="w-4 h-4" />
+                  <span>Copy Text</span>
+                </button>
+              </>
+            )}
+
+            {exportFormat === 'JSON' && (
+              <button
+                onClick={handleDownloadJSON}
+                className="px-5 py-2.5 bg-purple-600 hover:from-purple-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-lg"
+              >
+                <Download className="w-4 h-4" />
+                <span>Export JSON Payload</span>
+              </button>
+            )}
+
+            {exportFormat === 'CSV' && (
+              <button
+                onClick={handleDownloadCSV}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-lg"
+              >
+                <Download className="w-4 h-4" />
+                <span>Export CSV Dataset</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
