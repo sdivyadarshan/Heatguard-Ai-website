@@ -3,7 +3,7 @@
 > **An impact-based Extreme Heatwave Early Warning, Human Thermal Stress Intelligence & Municipal Command Platform built with React, TypeScript, Vite, Leaflet, and Express — engineered to solve MoES / NCMRWF Problem Statement `SIH26083` by shifting forecasting from *"what the weather will be"* to *"what the weather will do"* to human health.**
 
 - **Live Primary Deployment:** [https://heat-guard.ai.studio](https://heat-guard.ai.studio)
-- **GitHub Pages Fail-Safe Deployment:** Automated static build & deploy workflow included (`.github/workflows/deploy-gh-pages.yml`)
+- **GitHub Pages Fail-Safe Deployment:** Automated static build & deploy workflow included (https://sdivyadarshan.github.io/Heatguard-Ai-website/)
 
 ---
 
